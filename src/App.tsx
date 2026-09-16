@@ -39,6 +39,7 @@ export default function App(){
   const [checks,setChecks]=useState<Record<string,boolean>>({});
   const [exampleOpen,setExampleOpen]=useState(true);
   const [copyNotice,setCopyNotice]=useState("");
+  const [localCheck,setLocalCheck]=useState<{corrected:string;notes:string[]}|null>(null);
   const [saved,setSaved]=useState<any[]>(()=>{try{return JSON.parse(localStorage.getItem("mannal-essays")||"[]")}catch{return []}});
   const fileRef=useRef<HTMLInputElement>(null);
   const book=books.find(b=>b.id===bookId)||books[0];
@@ -47,6 +48,26 @@ export default function App(){
 
   const chooseProblem=(id:string)=>{setProblemId(id);setAnswers([]);setEssay("");setExampleOpen(true);setCopyNotice("");setView("learn")};
   const combineAnswers=()=>{const parts=answers.map(x=>(x||"").trim()).filter(Boolean);if(!parts.length){alert("먼저 글의 설계도에 생각을 적어 주세요.");return;}setEssay(parts.join("\n\n"));setCopyNotice("설계도 답을 순서대로 원고 작성란에 넣었습니다. 이제 문장 사이를 자연스럽게 연결해 보세요.")};
+  const localKoreanCheck=(text:string)=>{
+    let corrected=text.normalize("NFC").replace(/[ \\t]+/g," ").replace(/ *\\n */g,"\\n").trim();
+    const notes:string[]=[];
+    const rules:[RegExp,string,string][]=[
+      [/안보이게/g,"안 보이게","'안'은 뒤의 용언과 띄어 씁니다."],
+      [/하게된다/g,"하게 된다","보조 용언 '되다' 앞을 띄어 씁니다."],
+      [/할수/g,"할 수","의존 명사 '수'는 앞말과 띄어 씁니다."],
+      [/할것/g,"할 것","의존 명사 '것'은 앞말과 띄어 씁니다."],
+      [/때문에/g,"때문에",""],
+      [/스마트폰사용/g,"스마트폰 사용","명사 결합의 기본 띄어쓰기를 확인했습니다."]
+    ];
+    for(const [pattern,replacement,reason] of rules){if(pattern.test(corrected)){corrected=corrected.replace(pattern,replacement);if(reason)notes.push(reason)}}
+    const lines=corrected.split(/\\n+/).map(x=>x.trim()).filter(Boolean);
+    const fragments=lines.filter(x=>x.length>0&&!/[.!?。]$/.test(x)&&x.split(/\\s+/).length<=3);
+    if(fragments.length)notes.push("짧은 메모 형태가 있습니다. AI 평가 전에 주어와 서술어가 있는 완전한 문장으로 연결해 보세요.");
+    if(problem?.kind==="TOPIK 54"&&corrected.length<500)notes.push(`현재 ${corrected.length}자입니다. TOPIK 54 연습에서는 내용을 충분히 전개했는지 확인해 보세요.`);
+    if(problem?.kind==="TOPIK 53"&&corrected.length<150)notes.push(`현재 ${corrected.length}자입니다. TOPIK 53 연습에서는 자료의 핵심 수치와 비교가 충분한지 확인해 보세요.`);
+    return {corrected,notes:Array.from(new Set(notes))};
+  };
+  const runLocalCheck=()=>{if(!essay.trim())return;const result=localKoreanCheck(essay);setLocalCheck(result);if(result.corrected!==essay)setEssay(result.corrected);};
   const makeEvaluationPrompt=(text:string)=>{
     const rubric=problem?.kind==="TOPIK 53"?"TOPIK II 쓰기 53번의 채점 관점에 맞추어 내용 및 과제 수행, 글의 전개 구조, 언어 사용을 구분해 평가하고 총점 30점 기준의 예상 점수를 제시하세요.":problem?.kind==="TOPIK 54"?"TOPIK II 쓰기 54번의 채점 관점에 맞추어 내용 및 과제 수행, 글의 전개 구조, 언어 사용을 구분해 평가하고 총점 50점 기준의 예상 점수를 제시하세요.":"한국어 글쓰기 학습용으로 내용, 구조, 어휘, 문법을 각각 평가하고 총점 100점 기준의 학습용 예상 점수를 제시하세요.";
     return `당신은 한국어 글쓰기 학습을 돕는 채점·첨삭 도우미입니다.
@@ -78,7 +99,7 @@ ${rubric}
 ${text}`;
   };
   const copyForAI=async(text:string)=>{const payload=makeEvaluationPrompt(text);try{await navigator.clipboard.writeText(payload);setCopyNotice("저장 완료 · AI 채점용 글과 프롬프트를 클립보드에 복사했습니다.");return true;}catch{try{const ta=document.createElement("textarea");ta.value=payload;ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.focus();ta.select();const ok=document.execCommand("copy");document.body.removeChild(ta);setCopyNotice(ok?"저장 완료 · AI 채점용 내용을 클립보드에 복사했습니다.":"글은 저장했지만 자동 복사가 되지 않았습니다.");return ok;}catch{setCopyNotice("글은 저장했지만 자동 복사가 되지 않았습니다.");return false;}}};
-  const saveEssay=async()=>{if(!problem||!essay.trim())return;const id=Date.now();const item={id,title:problem.title,kind:problem.kind,level,date:new Date().toLocaleDateString("ko-KR"),text:essay,originalText:essay,status:"점검 중"};const next=[item,...saved];setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));setDraftId(id);setOriginalEssay(essay);setChecks({});await copyForAI(essay);setView("review")};
+  const saveEssay=async()=>{if(!problem||!essay.trim())return;const checked=localKoreanCheck(essay);const finalText=checked.corrected;setEssay(finalText);setLocalCheck(checked);const id=Date.now();const item={id,title:problem.title,kind:problem.kind,level,date:new Date().toLocaleDateString("ko-KR"),text:finalText,originalText:finalText,status:"점검 중"};const next=[item,...saved];setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));setDraftId(id);setOriginalEssay(finalText);setChecks({});await copyForAI(finalText);setView("review")};
   const finishRevision=()=>{if(!draftId)return;const next=saved.map(s=>s.id===draftId?{...s,text:essay,revisedText:essay,status:"수정 완료"}:s);setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));setView("saved")};
   const reviewGroups=problem?.kind==="TOPIK 53"?{
     "내용":["자료가 무엇을 보여 주는지 밝혔나요?","중요한 수치와 변화를 빠뜨리지 않았나요?","자료에 없는 내용을 임의로 넣지 않았나요?"],
