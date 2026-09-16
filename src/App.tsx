@@ -32,7 +32,10 @@ export default function App(){
   const [problemId,setProblemId]=useState("54-1");
   const [answers,setAnswers]=useState<string[]>([]);
   const [essay,setEssay]=useState("");
-  const [view,setView]=useState<"home"|"learn"|"upload"|"saved">("home");
+  const [view,setView]=useState<"home"|"learn"|"review"|"revise"|"upload"|"saved">("home");
+  const [draftId,setDraftId]=useState<number|null>(null);
+  const [originalEssay,setOriginalEssay]=useState("");
+  const [checks,setChecks]=useState<Record<string,boolean>>({});
   const [saved,setSaved]=useState<any[]>(()=>{try{return JSON.parse(localStorage.getItem("mannal-essays")||"[]")}catch{return []}});
   const fileRef=useRef<HTMLInputElement>(null);
   const book=books.find(b=>b.id===bookId)||books[0];
@@ -40,7 +43,19 @@ export default function App(){
   const kinds=useMemo(()=>Array.from(new Set(book?.problems.map(p=>p.kind)||[])),[book]);
 
   const chooseProblem=(id:string)=>{setProblemId(id);setAnswers([]);setEssay("");setView("learn")};
-  const saveEssay=()=>{if(!problem||!essay.trim())return;const next=[{id:Date.now(),title:problem.title,level,date:new Date().toLocaleDateString("ko-KR"),text:essay},...saved];setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));alert("내 글에 저장했습니다.")};
+  const saveEssay=()=>{if(!problem||!essay.trim())return;const id=Date.now();const item={id,title:problem.title,kind:problem.kind,level,date:new Date().toLocaleDateString("ko-KR"),text:essay,originalText:essay,status:"점검 중"};const next=[item,...saved];setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));setDraftId(id);setOriginalEssay(essay);setChecks({});setView("review")};
+  const finishRevision=()=>{if(!draftId)return;const next=saved.map(s=>s.id===draftId?{...s,text:essay,revisedText:essay,status:"수정 완료"}:s);setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));setView("saved")};
+  const reviewGroups=problem?.kind==="TOPIK 53"?{
+    "내용":["자료가 무엇을 보여 주는지 밝혔나요?","중요한 수치와 변화를 빠뜨리지 않았나요?","자료에 없는 내용을 임의로 넣지 않았나요?"],
+    "구조":["자료 소개→주요 결과→비교·변화→정리 순서가 자연스러운가요?","숫자를 단순히 나열하지 않고 비교했나요?"],
+    "어휘":["증가하다·감소하다·~에 비해 등 자료 설명 표현을 알맞게 사용했나요?","같은 표현을 지나치게 반복하지 않았나요?"],
+    "문법":["조사와 어미가 자연스러운가요?","문어체로 일관되게 썼나요?"]
+  }:{
+    "내용":["문제에서 요구한 내용에 모두 답했나요?","중심 생각이나 주장이 분명한가요?","이유와 구체적인 설명·예가 있나요?"],
+    "구조":["서론·본론·결론의 흐름이 보이나요?","문장과 문단의 순서가 자연스러운가요?","이유와 근거가 중심 생각에 연결되나요?"],
+    "어휘":["현재 급수에 맞는 어휘를 사용했나요?","같은 단어를 지나치게 반복하지 않았나요?","글의 주제에 맞는 정확한 표현을 사용했나요?"],
+    "문법":["조사와 어미가 자연스러운가요?","문장 호응이 자연스러운가요?","말하기 표현보다 글쓰기 문어체를 사용했나요?"]
+  };
   const importJson=(file:File)=>{const r=new FileReader();r.onload=()=>{try{const data=JSON.parse(String(r.result));const incoming:Array<Workbook>=Array.isArray(data)?data:[data];if(!incoming.every(x=>x.title&&Array.isArray(x.problems)))throw 0;const normalized=incoming.map((x,i)=>({...x,id:x.id||("book-"+Date.now()+"-"+i)}));const next=[...books,...normalized];setBooks(next);localStorage.setItem("mannal-workbooks",JSON.stringify(next));setBookId(normalized[0].id);setView("home");alert("문제집을 추가했습니다.")}catch{alert("문제집 JSON 형식을 확인해 주세요.")}};r.readAsText(file,"utf-8")};
 
   return <div className="min-h-screen bg-stone-50 text-stone-900">
@@ -79,9 +94,26 @@ export default function App(){
         <button onClick={saveEssay} className="w-full bg-emerald-700 text-white rounded-2xl py-4 font-bold">내 글 저장하기</button>
       </div>}
 
+      {view==="review"&&problem&&<div className="space-y-4">
+        <button onClick={()=>setView("learn")} className="text-sm">← 작성 화면</button>
+        <section className="bg-emerald-800 text-white rounded-3xl p-5"><p className="text-sm opacity-90">1차 글 저장 완료</p><h2 className="text-2xl font-bold mt-1">이제 내 글을 점검해 보세요.</h2><p className="mt-2 text-sm leading-6 opacity-90">정답을 확인하는 것이 아니라, 내가 쓴 글을 스스로 읽고 고칠 부분을 찾는 단계입니다.</p></section>
+        <section className="bg-white border rounded-2xl p-4"><h3 className="font-bold">내가 쓴 1차 글</h3><p className="mt-3 whitespace-pre-wrap leading-7">{originalEssay}</p></section>
+        {Object.entries(reviewGroups||{}).map(([group,items])=><section key={group} className="bg-white border rounded-2xl p-4"><h3 className="text-lg font-bold text-emerald-800">{group}</h3><div className="mt-3 space-y-3">{items.map((x,i)=>{const key=group+i;return <label key={key} className="flex gap-3 items-start cursor-pointer"><input type="checkbox" checked={!!checks[key]} onChange={e=>setChecks({...checks,[key]:e.target.checked})} className="mt-1 w-5 h-5"/><span>{x}</span></label>})}</div></section>)}
+        <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4"><b>{level}급 수정 목표</b><p className="mt-1">{LEVEL_TEXT[level]}</p></section>
+        <button onClick={()=>setView("revise")} className="w-full bg-emerald-700 text-white rounded-2xl py-4 font-bold">점검하고 내 글 수정하기</button>
+      </div>}
+
+      {view==="revise"&&problem&&<div className="space-y-4">
+        <button onClick={()=>setView("review")} className="text-sm">← 자기점검</button>
+        <section className="bg-white border rounded-2xl p-4"><h2 className="text-xl font-bold">1차 글과 비교하며 수정하기</h2><p className="text-sm text-stone-600 mt-2">점검한 내용을 생각하면서 아래 글을 직접 고쳐 보세요.</p></section>
+        <section className="bg-stone-100 rounded-2xl p-4"><h3 className="font-bold">수정 전 글</h3><p className="mt-2 whitespace-pre-wrap leading-7">{originalEssay}</p></section>
+        <section className="bg-white border-2 border-emerald-600 rounded-2xl p-4"><h3 className="font-bold text-emerald-800">수정할 글</h3><textarea value={essay} onChange={e=>setEssay(e.target.value)} rows={16} className="mt-3 w-full border rounded-xl p-3 leading-7" /><div className="text-right text-sm mt-1 text-stone-500">{essay.length}자</div></section>
+        <button onClick={finishRevision} className="w-full bg-emerald-700 text-white rounded-2xl py-4 font-bold">수정한 글 최종 저장</button>
+      </div>}
+
       {view==="upload"&&<div className="space-y-4"><button onClick={()=>setView("home")} className="text-sm">← 홈</button><section className="bg-white border rounded-2xl p-5"><h2 className="text-xl font-bold">문제집 추가</h2><p className="text-sm text-stone-600 mt-2 leading-6">인터넷 서버나 AI API 없이 이 기기에 문제집을 추가합니다. JSON 문제집 파일을 선택하세요.</p><input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={e=>e.target.files?.[0]&&importJson(e.target.files[0])}/><button onClick={()=>fileRef.current?.click()} className="mt-4 w-full py-4 rounded-2xl bg-emerald-700 text-white font-bold">문제집 파일 선택</button></section><section className="bg-stone-100 rounded-2xl p-4 text-xs leading-5"><b>문제집 형식</b><pre className="mt-2 whitespace-pre-wrap overflow-auto">{'{\n  "title":"나의 문제집",\n  "description":"설명",\n  "problems":[{\n    "id":"p1", "title":"문제 제목",\n    "kind":"TOPIK 54",\n    "prompt":"문제 내용",\n    "guide":["생각 질문 1","생각 질문 2"],\n    "vocabulary":["어휘1","어휘2"]\n  }]\n}'}</pre></section></div>}
 
-      {view==="saved"&&<div className="space-y-3"><button onClick={()=>setView("home")} className="text-sm">← 홈</button><h2 className="text-xl font-bold">내가 저장한 글</h2>{saved.length===0?<p className="bg-white border rounded-2xl p-5 text-sm">아직 저장한 글이 없습니다.</p>:saved.map(s=><article key={s.id} className="bg-white border rounded-2xl p-4"><div className="text-xs text-stone-500">{s.date} · {s.level}급</div><h3 className="font-bold mt-1">{s.title}</h3><p className="text-sm whitespace-pre-wrap mt-3 leading-6">{s.text}</p></article>)}</div>}
+      {view==="saved"&&<div className="space-y-3"><button onClick={()=>setView("home")} className="text-sm">← 홈</button><h2 className="text-xl font-bold">내가 저장한 글</h2>{saved.length===0?<p className="bg-white border rounded-2xl p-5 text-sm">아직 저장한 글이 없습니다.</p>:saved.map(s=><article key={s.id} className="bg-white border rounded-2xl p-4"><div className="text-xs text-stone-500">{s.date} · {s.level}급</div><h3 className="font-bold mt-1">{s.title}</h3><p className="text-sm font-semibold mt-2 text-emerald-700">{s.status||"저장됨"}</p>{s.originalText&&s.revisedText&&s.originalText!==s.revisedText?<details className="mt-3"><summary className="cursor-pointer font-semibold">수정 전·후 비교</summary><div className="mt-3 p-3 bg-stone-100 rounded-xl"><b>수정 전</b><p className="whitespace-pre-wrap mt-1">{s.originalText}</p></div><div className="mt-2 p-3 bg-emerald-50 rounded-xl"><b>수정 후</b><p className="whitespace-pre-wrap mt-1">{s.revisedText}</p></div></details>:<p className="text-sm whitespace-pre-wrap mt-3 leading-6">{s.text}</p>}</article>)}</div>}
     </main>
   </div>
 }
