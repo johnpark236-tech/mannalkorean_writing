@@ -1,1 +1,33 @@
 @import "tailwindcss";
+
+/* Accessibility: larger default type and touch-friendly controls for older learners */
+html {
+  font-size: 19px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  line-height: 1.7;
+}
+
+button,
+select,
+textarea,
+input {
+  font-size: 1rem;
+}
+
+button,
+select {
+  min-height: 48px;
+}
+
+textarea {
+  line-height: 1.8;
+}
+
+@media (max-width: 640px) {
+  html {
+    font-size: 18px;
+  }
+}
