@@ -2,7 +2,8 @@ import React, { useMemo, useRef, useState } from "react";
 
 type Level = 1|2|3|4|5|6;
 type Kind = "TOPIK 53"|"TOPIK 54"|"설명하는 글"|"주장하는 글"|"읽고 쓰기";
-type ExamplePart = { label:string; text:string };\ntype Problem = { id:string; title:string; kind:Kind; prompt:string; guide:string[]; vocabulary?:string[]; example?:string; exampleStructure?:ExamplePart[]; keyExpressions?:string[] };
+type ExamplePart = { label:string; text:string };
+type Problem = { id:string; title:string; kind:Kind; prompt:string; guide:string[]; vocabulary?:string[]; example?:string; exampleStructure?:ExamplePart[]; keyExpressions?:string[] };
 type Workbook = { id:string; title:string; description:string; problems:Problem[] };
 
 const SAMPLE: Workbook[] = [{
@@ -35,15 +36,49 @@ export default function App(){
   const [view,setView]=useState<"home"|"learn"|"review"|"revise"|"upload"|"saved">("home");
   const [draftId,setDraftId]=useState<number|null>(null);
   const [originalEssay,setOriginalEssay]=useState("");
-  const [checks,setChecks]=useState<Record<string,boolean>>({});\n  const [exampleOpen,setExampleOpen]=useState(true);
+  const [checks,setChecks]=useState<Record<string,boolean>>({});
+  const [exampleOpen,setExampleOpen]=useState(true);
+  const [copyNotice,setCopyNotice]=useState("");
   const [saved,setSaved]=useState<any[]>(()=>{try{return JSON.parse(localStorage.getItem("mannal-essays")||"[]")}catch{return []}});
   const fileRef=useRef<HTMLInputElement>(null);
   const book=books.find(b=>b.id===bookId)||books[0];
   const problem=book?.problems.find(p=>p.id===problemId)||book?.problems[0];
   const kinds=useMemo(()=>Array.from(new Set(book?.problems.map(p=>p.kind)||[])),[book]);
 
-  const chooseProblem=(id:string)=>{setProblemId(id);setAnswers([]);setEssay("");setExampleOpen(true);setView("learn")};
-  const saveEssay=()=>{if(!problem||!essay.trim())return;const id=Date.now();const item={id,title:problem.title,kind:problem.kind,level,date:new Date().toLocaleDateString("ko-KR"),text:essay,originalText:essay,status:"점검 중"};const next=[item,...saved];setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));setDraftId(id);setOriginalEssay(essay);setChecks({});setView("review")};
+  const chooseProblem=(id:string)=>{setProblemId(id);setAnswers([]);setEssay("");setExampleOpen(true);setCopyNotice("");setView("learn")};
+  const combineAnswers=()=>{const parts=answers.map(x=>(x||"").trim()).filter(Boolean);if(!parts.length){alert("먼저 글의 설계도에 생각을 적어 주세요.");return;}setEssay(parts.join("\n\n"));setCopyNotice("설계도 답을 순서대로 원고 작성란에 넣었습니다. 이제 문장 사이를 자연스럽게 연결해 보세요.")};
+  const makeEvaluationPrompt=(text:string)=>{
+    const rubric=problem?.kind==="TOPIK 53"?"TOPIK II 쓰기 53번의 채점 관점에 맞추어 내용 및 과제 수행, 글의 전개 구조, 언어 사용을 구분해 평가하고 총점 30점 기준의 예상 점수를 제시하세요.":problem?.kind==="TOPIK 54"?"TOPIK II 쓰기 54번의 채점 관점에 맞추어 내용 및 과제 수행, 글의 전개 구조, 언어 사용을 구분해 평가하고 총점 50점 기준의 예상 점수를 제시하세요.":"한국어 글쓰기 학습용으로 내용, 구조, 어휘, 문법을 각각 평가하고 총점 100점 기준의 학습용 예상 점수를 제시하세요.";
+    return `당신은 한국어 글쓰기 학습을 돕는 채점·첨삭 도우미입니다.
+아래 글은 한국어 학습자가 직접 작성한 글이며 목표 수준은 ${level}급입니다.
+
+[문제 유형]
+${problem?.kind}
+
+[문제]
+${problem?.prompt}
+
+[평가 기준]
+${rubric}
+점수는 실제 TOPIK 공식 성적이 아니라 학습을 위한 예상 점수임을 밝혀 주세요.
+
+[반드시 제공할 결과]
+1. 예상 총점과 항목별 점수
+2. 잘한 점 3가지
+3. 내용에서 고칠 점
+4. 구조와 문장 연결에서 고칠 점
+5. 어휘에서 고칠 점
+6. 문법·맞춤법에서 고칠 점
+7. 수정이 필요한 부분을 "원문 → 수정 예시 → 이유" 형식으로 제시
+8. 가장 중요한 수정 포인트 3가지를 우선순위로 제시
+9. 수정 방향을 반영한 참고용 개선 예시를 제시하되 학습자의 원래 생각을 바꾸지 말 것
+10. 설명은 ${level}급 학습자가 이해하기 쉽게 할 것
+
+[학습자 글]
+${text}`;
+  };
+  const copyForAI=async(text:string)=>{const payload=makeEvaluationPrompt(text);try{await navigator.clipboard.writeText(payload);setCopyNotice("저장 완료 · AI 채점용 글과 프롬프트를 클립보드에 복사했습니다.");return true;}catch{try{const ta=document.createElement("textarea");ta.value=payload;ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.focus();ta.select();const ok=document.execCommand("copy");document.body.removeChild(ta);setCopyNotice(ok?"저장 완료 · AI 채점용 내용을 클립보드에 복사했습니다.":"글은 저장했지만 자동 복사가 되지 않았습니다.");return ok;}catch{setCopyNotice("글은 저장했지만 자동 복사가 되지 않았습니다.");return false;}}};
+  const saveEssay=async()=>{if(!problem||!essay.trim())return;const id=Date.now();const item={id,title:problem.title,kind:problem.kind,level,date:new Date().toLocaleDateString("ko-KR"),text:essay,originalText:essay,status:"점검 중"};const next=[item,...saved];setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));setDraftId(id);setOriginalEssay(essay);setChecks({});await copyForAI(essay);setView("review")};
   const finishRevision=()=>{if(!draftId)return;const next=saved.map(s=>s.id===draftId?{...s,text:essay,revisedText:essay,status:"수정 완료"}:s);setSaved(next);localStorage.setItem("mannal-essays",JSON.stringify(next));setView("saved")};
   const reviewGroups=problem?.kind==="TOPIK 53"?{
     "내용":["자료가 무엇을 보여 주는지 밝혔나요?","중요한 수치와 변화를 빠뜨리지 않았나요?","자료에 없는 내용을 임의로 넣지 않았나요?"],
@@ -99,14 +134,17 @@ export default function App(){
         </section>}
         {problem.vocabulary&&<section className="bg-white border rounded-2xl p-4"><h3 className="font-bold text-sm">필수·추천 어휘</h3><div className="flex flex-wrap gap-2 mt-2">{problem.vocabulary.map(v=><span key={v} className="px-2.5 py-1 rounded-full bg-stone-100 text-sm">{v}</span>)}</div></section>}
         <section className="space-y-3"><h3 className="font-bold">글의 설계도</h3>{problem.guide.map((q,i)=><div key={i} className="bg-white border rounded-2xl p-4"><label className="text-sm font-semibold">{i+1}. {q}</label><textarea value={answers[i]||""} onChange={e=>{const a=[...answers];a[i]=e.target.value;setAnswers(a)}} rows={2} className="mt-2 w-full border rounded-xl p-3 text-base" placeholder="내 생각을 직접 적어 보세요."/></div>)}</section>
-        <section className="bg-white border rounded-2xl p-4"><h3 className="font-bold">원고 작성</h3><p className="text-xs text-stone-500 mt-1">위에서 정리한 생각을 연결하여 하나의 글로 완성하세요.</p><textarea value={essay} onChange={e=>setEssay(e.target.value)} rows={14} className="mt-3 w-full border rounded-xl p-3 leading-7" placeholder="여기에 글을 작성하세요."/><div className="text-right text-xs mt-1 text-stone-500">{essay.length}자</div></section>
+        <button onClick={combineAnswers} className="w-full bg-sky-700 text-white rounded-2xl py-4 font-bold">설계도 답을 원고에 합치기</button>
+        {copyNotice&&view==="learn"&&<p className="rounded-xl bg-sky-50 border border-sky-200 p-3 text-sm">{copyNotice}</p>}
+        <section className="bg-white border rounded-2xl p-4"><h3 className="font-bold">원고 작성</h3><p className="text-xs text-stone-500 mt-1">위의 답을 합친 뒤, 접속 표현과 문장 연결을 직접 다듬어 하나의 글로 완성하세요.</p><textarea value={essay} onChange={e=>setEssay(e.target.value)} rows={14} className="mt-3 w-full border rounded-xl p-3 leading-7" placeholder="여기에 글을 작성하세요."/><div className="text-right text-xs mt-1 text-stone-500">{essay.length}자</div></section>
         <section className="bg-white border rounded-2xl p-4"><h3 className="font-bold">스스로 점검하기</h3><div className="mt-2 space-y-2 text-sm">{["문제에서 요구한 내용에 모두 답했나요?","중심 생각과 이유가 연결되어 있나요?","구체적인 설명이나 예가 있나요?","문단을 알맞게 나누었나요?","급수에 맞는 어휘와 문어체를 사용했나요?"].map(x=><label key={x} className="flex gap-2"><input type="checkbox"/><span>{x}</span></label>)}</div></section>
-        <button onClick={saveEssay} className="w-full bg-emerald-700 text-white rounded-2xl py-4 font-bold">내 글 저장하기</button>
+        <button onClick={saveEssay} className="w-full bg-emerald-700 text-white rounded-2xl py-4 font-bold">저장하고 AI 채점용 내용 복사하기</button>
       </div>}
 
       {view==="review"&&problem&&<div className="space-y-4">
         <button onClick={()=>setView("learn")} className="text-sm">← 작성 화면</button>
         <section className="bg-emerald-800 text-white rounded-3xl p-5"><p className="text-sm opacity-90">1차 글 저장 완료</p><h2 className="text-2xl font-bold mt-1">이제 내 글을 점검해 보세요.</h2><p className="mt-2 text-sm leading-6 opacity-90">정답을 확인하는 것이 아니라, 내가 쓴 글을 스스로 읽고 고칠 부분을 찾는 단계입니다.</p></section>
+        {copyNotice&&<section className="bg-sky-50 border border-sky-200 rounded-2xl p-4"><h3 className="font-bold">AI에서 점검받기</h3><p className="mt-2">{copyNotice}</p><p className="text-sm mt-2">원하는 AI 브라우저를 열고 붙여넣으면 문제·원고·채점 요청이 함께 입력됩니다. AI 점수는 공식 TOPIK 점수가 아니라 학습용 예상 점수입니다.</p><button onClick={()=>copyForAI(originalEssay)} className="mt-3 w-full py-3 rounded-xl border bg-white font-bold">AI 채점용 내용 다시 복사</button></section>}
         <section className="bg-white border rounded-2xl p-4"><h3 className="font-bold">내가 쓴 1차 글</h3><p className="mt-3 whitespace-pre-wrap leading-7">{originalEssay}</p></section>
         {Object.entries(reviewGroups||{}).map(([group,items])=><section key={group} className="bg-white border rounded-2xl p-4"><h3 className="text-lg font-bold text-emerald-800">{group}</h3><div className="mt-3 space-y-3">{items.map((x,i)=>{const key=group+i;return <label key={key} className="flex gap-3 items-start cursor-pointer"><input type="checkbox" checked={!!checks[key]} onChange={e=>setChecks({...checks,[key]:e.target.checked})} className="mt-1 w-5 h-5"/><span>{x}</span></label>})}</div></section>)}
         <section className="bg-amber-50 border border-amber-200 rounded-2xl p-4"><b>{level}급 수정 목표</b><p className="mt-1">{LEVEL_TEXT[level]}</p></section>
